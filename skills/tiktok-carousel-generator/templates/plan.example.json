@@ -1,0 +1,55 @@
+{
+  "schema_version": "agent-native-v1",
+  "template_only": true,
+  "product": {
+    "name": "<用户商品名称>",
+    "supported_facts": [],
+    "missing_information": [],
+    "constraints": [],
+    "reference_resources": []
+  },
+  "market": "MY",
+  "language": "Bahasa Melayu",
+  "image_count": 6,
+  "aspect_ratio": "3:4",
+  "shared_visual_direction": "<配色、字体、光线及商品外观锚点>",
+  "caption": "<目标语言发布文案>",
+  "tags": [],
+  "slides": [
+    {
+      "position": 1,
+      "purpose": "<本页的单个销售信息任务>",
+      "title": "<准确的目标语言标题>",
+      "body": "<准确的目标语言短正文>",
+      "prompt": "<逐字包含标题正文的完整成品设计简报>",
+      "status": "planned",
+      "selected_version": null,
+      "versions": [],
+      "error": null
+    }
+  ],
+  "version_record_example": {
+    "version": 1,
+    "instruction": "<本次改动要求；初次生成留空>",
+    "title": "<该版本准确标题>",
+    "body": "<该版本准确正文>",
+    "prompt": "<实际发给生图工具的提示词>",
+    "tool_name": "<实际调用的现有工具名>",
+    "reference_resources": [],
+    "generation_task_id": null,
+    "image_resource": "<实际文件路径或宿主附件/资源ID>",
+    "actual_size": null,
+    "visual_review": "not_checked",
+    "review_notes": []
+  },
+  "export": {
+    "archive_resource": null,
+    "selected_images": []
+  },
+  "notes": [
+    "本文件仅是填写范例，不包含可执行策划或商品事实。",
+    "实际生成时删除template_only、version_record_example及说明性notes，按实际图数填写slides。",
+    "成功生成后将版本记录写入对应slide.versions并更新selected_version；只记录工具真实返回的路径或资源ID。",
+    "归档不得包含模型密钥或宿主配置；图片不能核验时保留not_checked。"
+  ]
+}

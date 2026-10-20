@@ -81,6 +81,16 @@
 - 代码库归档：在项目根目录同步维护 `skills/tiktok-carousel-generator`，方便用户直接打包压缩或推送到 GitHub 供团队下载使用；同时已同步注册至 `~/.agents/skills` 与 `~/.config/magpie/library/skills`。
 - 验证：84 项 pytest 持续全绿；实测从全局 Skill 目录直接运行便携版脚本（日本市场策划）成功输出地道日语原生文字设计简报，JSON 结构完整，无控制台编码异常。
 
+## 当前 Skill：Agent 原生零配置版（取代上述 API/CLI 分享方式）
+- 用户要求直接复用 Agent 自身模型分析/策划，调用会话已有生图工具，不再单独配置Key/模型或安装运行环境。
+- 分享目录 skills/tiktok-carousel-generator 仅4文件：SKILL.md、README.md、references/design-guide.md、templates/plan.example.json。旧generate_carousel.py、providers.py、requirements.txt、.env.example已从分享目录及本机安装副本移除。
+- 新规范包含11国默认语言、逐页完整含文字提示词、参考图传递、现有工具能力映射、异步任务收取、单图版本留存和交付归档。仅策划时不调用生图，缺少工具时如实交付已完成策划，不索取Key或读取宿主密钥。
+- Web项目及scripts目录中的旧CLI不作为Skill前提；本次未修改Web业务代码。
+- 已同步.agents安装目录和magpie库；.dsh技能路径为magpie库符号链接，当前宿主已识别新描述。
+- 校验通过：4文件清单、相对引用、11国映射、JSON模板、3个可见安装路径字节一致；ZIP白名单仅4文件，无密钥或配置。独立审查纸面推演六图生成/单图重生/仅策划流程通过，未调用收费生图。
+- 分享包 artifacts/tiktok-carousel-generator-agent-native.zip 已生成；源目录随Git推送，临时ZIP由本机会话交付。
+- 现有后端84项测试通过，前端类型检查和构建通过；本次未作实际商品出图效果验收。
+
 ## 下一步
 1. 用户在模型设置输入实际服务商地址/模型/Key，用真实商品完成质量验收。
 2. 基于品类加入真实商品抠图合成与更多版式/输出比例。

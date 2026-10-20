@@ -2,6 +2,12 @@
 
 面向服务器部署的 TikTok 带货图文 Web 应用。Windows 提供开发测试启动器；正式部署使用 Linux + Docker Compose。默认单管理员账号，所有商品资料和图片保存在自己的服务器，调用模型时会将选定商品资料及参考图片发送给配置的服务商。
 
+## Agent 零配置 Skill（可单独分享）
+
+如果你的 Agent 已具备生图工具，直接使用 [tiktok-carousel-generator](skills/tiktok-carousel-generator/SKILL.md)：分析与策划用 Agent 自身模型，生图调用当前工具。无须配置 Key、运行服务或安装 Python 依赖。
+
+分享整个 [Skill 目录](skills/tiktok-carousel-generator) 即可，内含执行规范、设计指南、归档模板和使用说明。接收方让 Agent 加载此 Skill 后，直接提供商品资料、参考图和目标市场。本节与下面的独立 Web 部署方式分别使用，Skill 不依赖 Web 应用。
+
 ## 已实现
 
 - 商品库：描述、SKU、价格/币种、卖点、约束、多角度参考图片、角色标注、归档。

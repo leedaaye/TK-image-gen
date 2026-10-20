@@ -1,107 +1,45 @@
-# TikTok 图文带货生成工具包 (tiktok-carousel-generator)
+# TikTok 图文 Skill：直接使用 Agent 的现有能力
 
-这是一个完全自包含、即开即用的 **TikTok 电商图文轮播（Photo Mode）全自动化生成工具包**。
-支持直接作为 AI Agent 的 Skill 使用，也可以由人类在命令行中直接运行。
+把整个 `tiktok-carousel-generator` 文件夹发给同事即可。这个包只提供执行流程、设计规范和归档模板：分析与策划由 Agent 自己完成，出图调用 Agent 当前已接入的生图/编辑工具。
 
----
+**无需填写 API Key、选择分析模型、安装 Python 依赖、启动网页或数据库。** 图片生成是否计费由接收方原有 Agent 的服务规则决定，本 Skill 不另建计费或配置通道。
 
-## 目录结构
+## 目录内容
 
 ```text
 tiktok-carousel-generator/
-├── SKILL.md                 # Agent Skill 规范与使用手册
-├── generate_carousel.py     # 独立主执行脚本 (CLI)
-├── providers.py             # 核心模型适配引擎 (带货叙事策划 + 原生文字绘制)
-├── .env.example             # 模型配置环境变量模板
-├── requirements.txt         # 核心 Python 依赖
-└── README.md                # 快速入门指引
+├── SKILL.md                       # Agent 直接执行的流程
+├── README.md                      # 分享和使用说明
+├── references/
+│   └── design-guide.md            # 文案、构图、原生文字提示词规范
+└── templates/
+    └── plan.example.json          # 结果归档填写范例
 ```
 
----
+## 怎么用
 
-## 快速安装与配置
+1. 将整个目录放到你使用的 Agent 支持的 Skill 目录，或直接让 Agent 阅读本目录的 SKILL.md。具体目录以各自 Agent 为准。
+2. 如果宿主只在新会话扫描技能，刷新列表或开启新会话。
+3. 直接说需求，并附商品资料和参考图，例如：
 
-### 1. 安装依赖
-需要 Python 3.10+ 环境：
-```bash
-pip install -r requirements.txt
-```
+> 用 tiktok-carousel-generator，基于我上传的商品参考图和说明，做一套马来西亚市场的6张 TikTok 带货图。使用马来语，生活方式风格，文字直接画在图片里。完成后给我图片、发布文案和整套压缩包。
 
-### 2. 配置 API Key
-复制 `.env.example` 为 `.env` 并填写：
-```env
-ANALYSIS_BASE_URL=https://api.openai.com/v1
-ANALYSIS_API_KEY=sk-xxxxxx
-ANALYSIS_MODEL=gpt-4o
+单图修改示例：
 
-IMAGE_BASE_URL=https://api.openai.com/v1
-IMAGE_API_KEY=sk-xxxxxx
-IMAGE_MODEL=gpt-image-1
-IMAGE_MODE=reference
-```
-*(注：如果不想使用 `.env` 文件，也可以在运行命令时直接通过 `--analysis-key`、`--image-key` 等参数传入。)*
+> 第2张换成暖色夕阳场景，商品外观和原有文字保持不变，其余图片不动。
 
----
+只要策划示例：
 
-## 常用命令示例
+> 先做日本市场的4张图文策划和完整提示词，这次不生成图片。
 
-### 1. 全套图文一键生成 (直出成套带货图片与发布文案)
-```bash
-python generate_carousel.py \
-  --name "车载香薰" \
-  --desc "120ml易拉罐车用香氛，专为热带气候调配，香气柔和持久，不晕车。" \
-  --features "120ml大容量；旋转出气孔自由调节香度；6.5cm杯架尺寸；不漏液" \
-  --constraints "不宣称医疗功效，不编造未提供的权威认证" \
-  --images "path/to/ref1.jpg,path/to/ref2.jpg" \
-  --market "MY" \
-  --count 6 \
-  --style "生活方式" \
-  --out-dir "./my_car_scent_carousel"
-```
-完成后，输出目录下将包含：
-- `01.jpg` ~ `06.jpg`：模型原生绘制了目标语言文案的高清带货图片。
-- `01.png` ~ `06.png`：模型无损原图。
-- `caption.txt`：适合直接复制发布的 TikTok 文案与热门标签。
-- `plan.json`：每张图的完整 Prompt、文案与策划方案。
+## 前提与交付
 
-### 2. 先审策划再出图 (省流模式)
-添加 `--plan-only` 参数，只进行 AI 视觉策划并输出文案与每张图的 Prompt，不调用生图模型扣费：
-```bash
-python generate_carousel.py \
-  --name "车载香薰" \
-  --market "MY" \
-  --count 4 \
-  --plan-only \
-  --out-dir "./my_plan_only"
-```
+- 接收方 Agent 需要已经具备可调用的生图工具。仅有聊天或看图能力不等于能出图；Skill 不能凭空增加宿主没有的能力。
+- 不绑定具体工具名称或模型品牌，由 Agent 按当前工具定义映射提示词、参考图和尺寸。
+- 用户资料和图片结果保存在工作区，不写入本 Skill 包。支持目录文件时归档图片、策划、发布文案及ZIP；只能交付附件时使用附件。
+- 单图修改保留历史版本。缺少生图/参考图/文件能力时如实说明，仍交付已完成的策划，不引导配置新接口。
+- 文案和商品还原效果取决于宿主模型，Agent 应实际查看图片、记录未核验项，不能保证流量、销量或绝对还原。
 
-### 3. 单图精准微调 (Refine Slide)
-如果对某一张（例如第 1 张）画面不满意，希望调整光影或背景：
-```bash
-python generate_carousel.py \
-  --name "车载香薰" \
-  --refine-slide 1 \
-  --instruction "将背景换为傍晚夕阳暖光，金色余晖，保持商品主体与原有文案" \
-  --plan-file "./my_plan_only/plan.json" \
-  --out-dir "./my_plan_only"
-```
+## 与旧版的区别
 
----
-
-## 11 国目标市场代号
-
-指定 `--market` 时输入国家代号，系统会自动适配该国主流语言与文案表达：
-
-| 代码 | 市场 | 默认语言 |
-|:---|:---|:---|
-| **MY** | 马来西亚 | 马来语（Bahasa Melayu） |
-| **ID** | 印度尼西亚 | 印尼语（Bahasa Indonesia） |
-| **TH** | 泰国 | 泰语（ภาษาไทย） |
-| **PH** | 菲律宾 | 菲律宾语（Filipino） |
-| **VN** | 越南 | 越南语（Tiếng Việt） |
-| **SG** | 新加坡 | 英语（English） |
-| **US** | 美国 | 美式英语（American English） |
-| **UK** | 英国 | 英式英语（British English） |
-| **AU** | 澳大利亚 | 澳大利亚英语（Australian English） |
-| **CA** | 加拿大 | 加拿大英语（Canadian English） |
-| **JP** | 日本 | 日语（日本語） |
+本版不再包含 API 客户端脚本、配置模板和依赖清单。分享只需上面4个文件，不包含任何人的模型配置、密钥或商品资料。Web 项目和旧命令行工具是独立产品，不是本 Skill 的运行前提。
