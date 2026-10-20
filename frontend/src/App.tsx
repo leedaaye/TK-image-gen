@@ -38,7 +38,88 @@ export default function App() {
   if (!auth.authenticated) return <AuthScreen setup={auth.setup_required} onLogin={() => { setLoading(true); setAuth({ authenticated: true, setup_required: false }); }} />;
   const currentNav = navigation.find(item => item.id === page)!;
   const activeTasks = tasks.filter(task => ['running', 'queued'].includes(task.status));
-  return <div className="app-shell">{mobile && <div className="sidebar-scrim" onClick={() => setMobile(false)} />}<aside className={`sidebar ${mobile ? 'sidebar-open' : ''}`}><a className="brand" href="#" onClick={e => { e.preventDefault(); navigate('overview'); }}><div className="brand-mark"><Sparkles size={24} /></div><span>TK<span className="brand-light"> Studio</span><small>图文创作工作台</small></span></a><button className="button primary sidebar-create" onClick={newProject}><Plus size={18} />新建图文项目</button><div className="nav-caption">工作空间</div><nav>{navigation.map(item => <button key={item.id} className={`nav-item ${page === item.id ? 'active' : ''}`} onClick={() => navigate(item.id)}><item.icon size={19} /><span>{item.label}</span>{item.id === 'tasks' && activeTasks.length > 0 && <b>{activeTasks.length}</b>}{page === item.id && <ChevronRight size={15} />}</button>)}</nav><div className="sidebar-bottom"><div className="creative-note"><div><Zap size={17} /><span>为创意，留出更多时间</span></div><p>独立任务持续执行<br />关闭页面，也不打断灵感。</p><span className={`worker-state ${health?.worker_alive ? 'online' : ''}`}><i />{health?.worker_alive ? '创作引擎运行中' : '等待 Worker 连接'}</span></div><button className="profile" onClick={async () => { try { await api.logout(); setAuth({ authenticated: false, setup_required: false }); } catch (err) { notify(errorMessage(err)); } }}><span className="avatar">A</span><span><strong>管理员</strong><small>专属创作空间</small></span><LogOut size={16} /></button></div></aside><div className="main-shell"><header className="topbar"><div className="breadcrumb"><button className="icon-button menu-toggle" onClick={() => setMobile(true)} aria-label="打开导航"><Menu size={21} /></button><span>工作空间</span><ChevronRight size={14} /><strong>{currentNav.label}</strong></div><div className="topbar-right"><span className="environment"><i />{health?.database === 'sqlite' ? 'SQLite 开发环境' : health?.database === 'postgresql' ? 'PostgreSQL' : '私有工作空间'}</span><button className="icon-button" title="查看任务" onClick={() => navigate('tasks')} aria-label="查看任务"><Bell size={18} />{activeTasks.length > 0 && <i className="notification-dot" />}</button><span className="avatar small">A</span></div></header><main className="main-content"><div className="page-title"><div><div className="section-kicker">TK STUDIO / WORKSPACE</div><h1>{currentNav.label}<span className="title-dot" /></h1><p>{currentNav.description}</p></div>{page === 'overview' && <button className="button primary" onClick={newProject}><Plus size={17} />新建图文项目</button>}</div>{loadError && <div className="connection-error"><ErrorBox message={loadError} /><button className="button small-button" onClick={() => void refresh()}>重新连接</button></div>}{loading ? <Spinner /> : <>{page === 'overview' && <Overview products={products} projects={projects} tasks={tasks} newProject={newProject} openProject={openProject} navigate={navigate} />}{page === 'products' && <Products products={products} refresh={refresh} notify={notify} />}{page === 'studio' && <Studio products={products} projects={projects} selectedId={selectedProject} onSelect={setSelectedProject} createToken={createToken} refresh={refresh} notify={notify} />}{page === 'tasks' && <Tasks tasks={tasks} projects={projects} openProject={openProject} refresh={refresh} notify={notify} />}{page === 'settings' && <ModelSettings notify={notify} />}</>}</main><footer className="main-footer"><span>用灵感连接商品与世界</span><span>TK Studio <i /> Private workspace</span></footer></div>{notice && <div className="toast" role="status"><CircleHelp size={18} />{notice}<button onClick={() => setNotice('')} aria-label="关闭提示"><X size={15} /></button></div>}</div>;
+  return <div className="app-shell">
+    {mobile && <div className="sidebar-scrim" onClick={() => setMobile(false)} />}
+    <aside className={`sidebar ${mobile ? 'sidebar-open' : ''}`}>
+      <a className="brand" href="#" onClick={e => { e.preventDefault(); navigate('overview'); }}>
+        <div className="brand-mark"><Sparkles size={24} /></div>
+        <span>TK<span className="brand-light"> Studio</span><small>图文创作工作台</small></span>
+      </a>
+      <button className="button primary sidebar-create" onClick={newProject}>
+        <Plus size={18} />新建图文项目
+      </button>
+      <div className="nav-caption">工作空间</div>
+      <nav>
+        {navigation.map(item => (
+          <button key={item.id} className={`nav-item ${page === item.id ? 'active' : ''}`} onClick={() => navigate(item.id)}>
+            <item.icon size={19} />
+            <span>{item.label}</span>
+            {item.id === 'tasks' && activeTasks.length > 0 && <b>{activeTasks.length}</b>}
+            {page === item.id && <ChevronRight size={15} />}
+          </button>
+        ))}
+      </nav>
+      <div className="sidebar-bottom">
+        <div className="creative-note">
+          <div><Zap size={17} /><span>为创意，留出更多时间</span></div>
+          <p>独立任务持续执行<br />关闭页面，也不打断灵感。</p>
+          <span className={`worker-state ${health?.worker_alive ? 'online' : ''}`}>
+            <i />{health?.worker_alive ? '创作引擎运行中' : '等待 Worker 连接'}
+          </span>
+        </div>
+        <button className="profile" onClick={async () => { try { await api.logout(); setAuth({ authenticated: false, setup_required: false }); } catch (err) { notify(errorMessage(err)); } }}>
+          <span className="avatar">A</span>
+          <span><strong>管理员</strong><small>专属创作空间</small></span>
+          <LogOut size={16} />
+        </button>
+      </div>
+    </aside>
+    <div className="main-shell">
+      <header className="topbar">
+        <div className="breadcrumb">
+          <button className="icon-button menu-toggle" onClick={() => setMobile(true)} aria-label="打开导航">
+            <Menu size={21} />
+          </button>
+          <span>工作空间</span>
+          <ChevronRight size={14} />
+          <strong>{currentNav.label}</strong>
+        </div>
+        <div className="topbar-right">
+          <button className="icon-button" title="查看任务" onClick={() => navigate('tasks')} aria-label="查看任务">
+            <Bell size={18} />
+            {activeTasks.length > 0 && <i className="notification-dot" />}
+          </button>
+          <span className="avatar small">A</span>
+        </div>
+      </header>
+      <main className="main-content">
+        {loadError && (
+          <div className="connection-error">
+            <ErrorBox message={loadError} />
+            <button className="button small-button" onClick={() => void refresh()}>重新连接</button>
+          </div>
+        )}
+        {loading ? <Spinner /> : <>
+          {page === 'overview' && <Overview products={products} projects={projects} tasks={tasks} newProject={newProject} openProject={openProject} navigate={navigate} />}
+          {page === 'products' && <Products products={products} refresh={refresh} notify={notify} />}
+          {page === 'studio' && <Studio products={products} projects={projects} selectedId={selectedProject} onSelect={setSelectedProject} createToken={createToken} refresh={refresh} notify={notify} />}
+          {page === 'tasks' && <Tasks tasks={tasks} projects={projects} openProject={openProject} refresh={refresh} notify={notify} />}
+          {page === 'settings' && <ModelSettings notify={notify} />}
+        </>}
+      </main>
+      <footer className="main-footer">
+        <span>用灵感连接商品与世界</span>
+        <span>TK Studio <i /> Private workspace</span>
+      </footer>
+    </div>
+    {notice && (
+      <div className="toast" role="status">
+        <CircleHelp size={18} />
+        {notice}
+        <button onClick={() => setNotice('')} aria-label="关闭提示"><X size={15} /></button>
+      </div>
+    )}
+  </div>;
 }
 
 function Overview({ products, projects, tasks, newProject, openProject, navigate }: { products: Product[]; projects: Project[]; tasks: Task[]; newProject: () => void; openProject: (id: string) => void; navigate: (page: Page) => void }) {
