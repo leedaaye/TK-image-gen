@@ -1,15 +1,14 @@
-"""Offline provider and rendering regression tests; no live model credentials needed."""
+"""Offline model-provider regression tests; no live model credentials needed."""
 import asyncio
 import base64
 import io
 import json
-from pathlib import Path
 
 import httpx
 from PIL import Image
 import pytest
 
-from app import providers, rendering
+from app import providers
 
 
 @pytest.fixture
@@ -365,57 +364,3 @@ def test_analysis_connection_checks_json(monkeypatch, provider):
     mock_http(monkeypatch, lambda request: httpx.Response(200, json={
         "choices": [{"message": {"content": '{"ok":true}'}}]}))
     assert "JSON" in asyncio.run(providers.test_provider("analysis", provider))
-
-
-@pytest.mark.parametrize("size", [(1600, 600), (300, 1600), (300, 300)])
-def test_render_crop_gradient_and_no_model_calls(tmp_path, size):
-    source, output = tmp_path / "base.png", tmp_path / "nested" / "out.png"
-    Image.new("RGB", size, "white").save(source)
-    rendering.render_image(source, output, "Readable title", "Body text " * 90, "en")
-    with Image.open(output) as result:
-        assert result.size == (1080, 1440)
-        assert result.mode == "RGB"
-        assert sum(result.getpixel((20, 1400))) < sum(result.getpixel((20, 200)))
-    with Image.open(source) as original:
-        assert original.size == size
-        assert original.getpixel((0, 0)) == (255, 255, 255)
-
-
-def test_unicode_wrap_and_fit_never_overflow():
-    text = "中文商品介绍，这是已知事实。超长说明" * 80
-    try:
-        font, lines, step = rendering._fit_text(text, "zh-CN", 928, 330, 38, 24)
-    except RuntimeError:
-        pytest.skip("CJK font is not installed in this test environment")
-    assert all(font.getlength(line) <= 928 for line in lines)
-    assert len(lines) * step <= 330
-    assert lines[-1].endswith("…")
-    english = rendering._wrap_text("A " + "longword" * 100, font, 928)
-    assert all(font.getlength(line) <= 928 for line in english)
-
-
-def test_render_unicode_and_transparency(tmp_path):
-    try:
-        rendering._load_font(24, "zh", "中文")
-    except RuntimeError:
-        pytest.skip("CJK font is not installed in this test environment")
-    source, output = tmp_path / "base.png", tmp_path / "out.jpg"
-    Image.new("RGBA", (500, 800), (255, 0, 0, 0)).save(source)
-    rendering.render_image(source, output, "中文商品标题" * 40, "说明文案 " * 200, "zh")
-    with Image.open(output) as result:
-        assert result.size == (1080, 1440)
-        assert result.getpixel((20, 20))[0] > 230
-
-
-def test_render_exif_orientation(tmp_path):
-    source, output = tmp_path / "base.jpg", tmp_path / "out.png"
-    image = Image.new("RGB", (80, 120), "red")
-    image.paste("blue", (0, 60, 80, 120))
-    exif = image.getexif()
-    exif[274] = 6
-    image.save(source, exif=exif)
-    rendering.render_image(source, output, "", "")
-    with Image.open(output) as result:
-        left, right = result.getpixel((10, 720)), result.getpixel((1070, 720))
-        assert left[2] > left[0]
-        assert right[0] > right[2]

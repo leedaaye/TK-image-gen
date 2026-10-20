@@ -8,6 +8,21 @@
 
 分享整个 [Skill 目录](skills/tiktok-carousel-generator) 即可，内含执行规范、设计指南、归档模板和使用说明。接收方让 Agent 加载此 Skill 后，直接提供商品资料、参考图和目标市场。本节与下面的独立 Web 部署方式分别使用，Skill 不依赖 Web 应用。
 
+## 目录说明
+
+| 目录 | 用途 |
+| --- | --- |
+| backend/ | 服务端、迁移与有效回归测试 |
+| frontend/ | React界面、锁文件和本机构建输出 |
+| scripts/ | Windows启动器 |
+| skills/ | 可单独分享的零配置Agent Skill源文件 |
+| exports/ | 本机分享ZIP等交付物，不提交Git |
+| data/ | 实际商品、项目和加密密钥，需备份，勿清空 |
+| logs/ | 运行日志和启动器进程状态 |
+| .venv/、frontend/node_modules/ | 本机运行与构建依赖，保留以便一键启动 |
+
+临时验收截图、模拟数据和探测脚本已清理；测试缓存与构建缓存可自动再生，不提交Git。
+
 ## 已实现
 
 - 商品库：描述、SKU、价格/币种、卖点、约束、多角度参考图片、角色标注、归档。

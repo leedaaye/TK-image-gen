@@ -6,5 +6,6 @@ frontend/dist
 data
 logs
 artifacts
+exports
 **/__pycache__
 **/.pytest_cache

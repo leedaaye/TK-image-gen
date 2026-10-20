@@ -9,3 +9,6 @@ __pycache__/
 *.pyc
 *.tsbuildinfo
 artifacts/
+exports/
+# Local npm fallback and generated output must not enter commits.
+frontend/package-lock.json
