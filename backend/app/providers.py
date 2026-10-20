@@ -8,6 +8,8 @@ import json
 import math
 from pathlib import Path
 from urllib.parse import urlsplit
+from urllib.request import getproxies_environment, proxy_bypass_environment
+import ipaddress
 import warnings
 
 import httpx
@@ -115,12 +117,40 @@ async def _read_response(response: httpx.Response, limit: int) -> bytes:
     return b"".join(chunks)
 
 
+def _network_options(url: str) -> dict:
+    """Resolve environment proxies per destination, avoiding HTTPX's IPv6 NO_PROXY parser.
+
+    Never mutate process environment: image jobs run concurrently. Keep external
+    HTTP(S)/SOCKS proxies while always reaching loopback model services directly.
+    """
+    try:
+        parts = urlsplit(url)
+        hostname = parts.hostname
+        _ = parts.port
+        if not hostname or parts.scheme not in {'http', 'https'}:
+            raise ValueError('invalid destination')
+        local = hostname.lower() == 'localhost'
+        try:
+            local = local or ipaddress.ip_address(hostname).is_loopback
+        except ValueError:
+            pass
+        proxies = getproxies_environment()
+        bypass = local or proxy_bypass_environment(hostname, proxies) or proxy_bypass_environment(parts.netloc, proxies)
+        proxy = None if bypass else proxies.get(parts.scheme, proxies.get('all'))
+        if proxy:
+            parsed = httpx.URL(proxy)
+            if parsed.scheme not in {'http', 'https', 'socks5', 'socks5h'} or not parsed.host:
+                raise ValueError('invalid proxy')
+        return {'trust_env': False, 'proxy': proxy}
+    except (ValueError, httpx.InvalidURL):
+        raise ProviderError('网络地址或环境代理配置无效，请检查接口地址及 HTTP_PROXY / HTTPS_PROXY / ALL_PROXY') from None
+
+
 async def _request_json(provider: dict, endpoint: str, *, payload: dict | None = None,
                         form: dict | None = None, files: list | None = None) -> dict:
     base, _, _, timeout = _settings(provider)
     try:
-        local_endpoint = urlsplit(base).hostname in {'127.0.0.1', 'localhost', '::1'}
-        async with httpx.AsyncClient(timeout=httpx.Timeout(timeout), follow_redirects=False, trust_env=not local_endpoint) as client:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(timeout), follow_redirects=False, **_network_options(base)) as client:
             async with client.stream("POST", f"{base}/{endpoint}", headers=_headers(provider),
                                      json=payload, data=form, files=files) as response:
                 raw = await _read_response(response, MAX_RESPONSE_BYTES)
@@ -129,7 +159,7 @@ async def _request_json(provider: dict, endpoint: str, *, payload: dict | None =
         raise
     except httpx.TimeoutException:
         raise ProviderError("模型请求超时，请稍后重试或调整超时设置") from None
-    except (httpx.HTTPError, OSError, ValueError, TypeError):
+    except (httpx.HTTPError, httpx.InvalidURL, OSError, ValueError, TypeError):
         raise ProviderError("无法读取模型响应，请检查服务地址、认证及网络") from None
     if not isinstance(result, dict):
         raise ProviderError("模型服务响应必须为 JSON 对象")
@@ -225,7 +255,7 @@ async def _download_image(url: str, timeout: float) -> bytes:
         if parts.scheme not in {"http", "https"} or not parts.hostname or parts.username or parts.password:
             raise ProviderError("模型返回的图片下载地址无效")
         # Use a separate client: never send the provider Authorization header to a storage URL.
-        async with httpx.AsyncClient(timeout=httpx.Timeout(timeout), follow_redirects=False) as client:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(timeout), follow_redirects=False, **_network_options(url)) as client:
             async with client.stream("GET", url) as response:
                 mime = response.headers.get("content-type", "").split(";", 1)[0].strip().lower()
                 if mime not in set(_ALLOWED_MIMES.values()):
@@ -239,7 +269,7 @@ async def _download_image(url: str, timeout: float) -> bytes:
         raise
     except httpx.TimeoutException:
         raise ProviderError("模型图片下载超时") from None
-    except (httpx.HTTPError, OSError, ValueError, TypeError):
+    except (httpx.HTTPError, httpx.InvalidURL, OSError, ValueError, TypeError):
         raise ProviderError("模型图片下载失败，请重试") from None
 
 

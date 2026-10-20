@@ -34,6 +34,7 @@ def reference(tmp_path, png):
 
 def mock_http(monkeypatch, handler):
     real_client = httpx.AsyncClient
+    monkeypatch.setattr(providers, 'getproxies_environment', lambda: {})
     transport = httpx.MockTransport(handler)
     monkeypatch.setattr(providers.httpx, "AsyncClient", lambda **kwargs: real_client(
         **kwargs, transport=transport))
