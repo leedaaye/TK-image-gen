@@ -273,8 +273,16 @@ async def _analyze(provider: dict, system: str, content: list[dict]) -> object:
         **extra, "model": model, "response_format": {"type": "json_object"},
         "messages": [{"role": "system", "content": system}, {"role": "user", "content": content}],
     })
+    raw_text = _chat_content(result).strip()
+    if raw_text.startswith("```"):
+        lines = raw_text.splitlines()
+        if lines[0].startswith("```"):
+            lines = lines[1:]
+        if lines and lines[-1].strip() == "```":
+            lines = lines[:-1]
+        raw_text = "\n".join(lines).strip()
     try:
-        return json.loads(_chat_content(result))
+        return json.loads(raw_text)
     except (json.JSONDecodeError, TypeError):
         raise ProviderError("分析模型未返回有效 JSON，请使用支持 JSON 输出的模型") from None
 

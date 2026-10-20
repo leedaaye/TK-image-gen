@@ -67,6 +67,13 @@
 - 验证：84项pytest通过（新增准确prompt直传、像素无叠字/裁切、旧项目升级、重试复用、空说明修订、风格变化版本恢复等）；tsc/Vite构建通过；Chrome模拟API验证草稿/付费生成两步、版本prompt可见、旧图保持，零脚本错误。
 - 本次未调用真实付费模型；正式文字拼写与商品还原效果需用户在新流程中验收。
 
+## 本次扩展：抽象为 Agent Skill 与独立 CLI 自动化生成管道
+- 抽象并落地系统级 Skill：`tiktok-carousel-generator`，已注册至 `.agents/skills` 与 `magpie/library/skills`。
+- 新增独立命令行自动化脚本：`scripts/generate_carousel.py`，支持无 UI 模式下由 Agent 自动化驱动完整链路（分析策划 -> 原生文字提示词 -> 并发生图 -> 文件与文案归档）。
+- 支持 `--plan-only` 预审策划与 `--refine-slide` 单图微调，自动复用本地模型配置，提供标准 JSON stdout 输出供 Agent 结构化读取。
+- 增强 providers 的 JSON 容错保护：自动识别并剥离模型偶然返回的 markdown 代码块包裹（```json ... ```）。
+- 验证：84 项 pytest 持续全绿；真实调用本地 analysis 模型实测 `--plan-only` 策划输出与 `--refine-slide` 单图 Prompt 微调均顺利成功。
+
 ## 下一步
 1. 用户在模型设置输入实际服务商地址/模型/Key，用真实商品完成质量验收。
 2. 基于品类加入真实商品抠图合成与更多版式/输出比例。
