@@ -1,0 +1,42 @@
+# 项目状态
+
+更新时间：2026-10-20，第一版可运行实现已完成。
+
+## 当前实现
+- React/TypeScript/Vite 中文响应式工作台：登录/初始化、总览、商品库、生成项目、任务中心、模型配置。
+- FastAPI + SQLAlchemy，Alembic 初始迁移；正式 PostgreSQL，本机缺少 Docker 使用 SQLite 开发替代。
+- 商品资料和参考图持久化；项目保存商品快照。
+- OpenAI chat/completions 视觉策划、images/edits 多参考图、images/generations 纯背景模式。extra、Key、超时、并发分别配置。
+- API Key Fernet 加密、管理员 scrypt 密码、HttpOnly session、文件鉴权、路径校验和写请求 Origin 检查。
+- 独立 Worker，持久化逐图队列、并发、失败重试、中断识别；非幂等付费请求不盲目自动重试。
+- 4–10 张完整策划、人工确认或自动出图、单图修改、历史版本选择、文案本地重排和 ZIP 导出。
+- 固定1080×1440输出，Pillow独立文字排版；跨平台字体探测。
+- Windows BAT/VBS隐藏启动、停止整个Python进程树、重复启动保护、日志及重建入口。
+- Dockerfile + Compose（PostgreSQL、迁移、Web、Worker、卷、健康检查、11分钟停止宽限）。
+
+## 当前运行
+- Windows启动器已启动干净业务实例：http://127.0.0.1:8000 。data/ 内商品、项目、任务均为空；管理员初始化状态已设置，保留现状，不重置密码。
+- 当前 API/Worker 由 scripts/launcher.py 管理，logs/processes.json保存PID；使用stop.bat停止，start.bat或start.vbs启动。
+- artifacts/smoke-data 是独立浏览器验收数据，不用于日常业务；模拟模型端点及临时后台测试服务均已停止。
+- 当前未配置正式模型API Key。
+
+## 验证结果
+- Python pytest：41 passed；覆盖认证、CSRF、密钥加密、商品/图片、快照、策划到生成、并发防重复、版本、导出、中断、重试、无效请求、路径穿越、迁移和模型适配/排版。
+- 前端 tsc -b 与 Vite生产构建通过。
+- Chrome Playwright：录入配置/商品/参考图、策划确认、四图生成、改文字、单图重生、历史版本恢复、批量含底图下载，零pageerror；390px移动布局无横向溢出。
+- 实际Windows VBS启动就绪，完整进程树停止和端口释放验证通过。
+- 独立审查发现的路径穿越、代理限流绕过、旧任务重试、无效PATCH、启动器旧Worker遗留等问题已修。
+- 唯一测试警告是上游Starlette对httpx TestClient的弃用提示，不影响当前测试。
+
+## 未实测与明确限制
+- 当前机器无Docker，未在真实Linux容器/PostgreSQL上启动；Compose仅静态解析。部署时执行README步骤并验证。
+- 所有模型测试使用离线Mock或本机模拟服务；未调用真实付费模型。需接入用户服务商做真实参考图兼容性和商品还原验收。
+- 生图仅同步OpenAI images接口，不支持返回task_id的异步服务商，后续按实际供应商加适配。
+- 纯背景仅生成场景，不自动合成真实商品；暂未做自动抠图、S3存储实现或自由画布排版。
+- 默认单管理员，不含团队权限、TikTok自动发布、批量跨商品创建和价格覆盖等后续能力。
+- 历史商品参考图和旧渲染文件保留，暂未提供垃圾清理；需要定期备份数据库、图片和SECRET_KEY。
+
+## 下一步
+1. 用户在模型设置输入实际服务商地址/模型/Key，用真实商品完成质量验收。
+2. 基于品类加入真实商品抠图合成与更多版式/输出比例。
+3. 服务器就绪后验证Docker/PostgreSQL、HTTPS反代和持久化备份恢复。

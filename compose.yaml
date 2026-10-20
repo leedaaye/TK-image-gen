@@ -1,0 +1,62 @@
+name: tk-studio
+x-app: &app
+  build: .
+  image: tk-studio:local
+  environment: &env
+    DATABASE_URL: postgresql+psycopg://tk:${POSTGRES_PASSWORD:?请在.env中设置POSTGRES_PASSWORD}@db:5432/tk
+    DATA_DIR: /data
+    SECRET_KEY: ${SECRET_KEY:?请在.env中设置至少32字符SECRET_KEY}
+    ADMIN_PASSWORD: ${ADMIN_PASSWORD:?首次部署请设置至少10字符管理员密码}
+    COOKIE_SECURE: ${COOKIE_SECURE:-false}
+  volumes:
+    - content:/data
+  restart: unless-stopped
+  stop_grace_period: 11m
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: tk
+      POSTGRES_USER: tk
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?设置数据库密码}
+    volumes:
+      - database:/var/lib/postgresql/data
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -U tk -d tk']
+      interval: 5s
+      timeout: 5s
+      retries: 15
+    restart: unless-stopped
+  migrate:
+    <<: *app
+    command: [python, -m, alembic, -c, alembic.ini, upgrade, head]
+    restart: 'no'
+    depends_on:
+      db:
+        condition: service_healthy
+  web:
+    <<: *app
+    ports:
+      - '${BIND_ADDRESS:-127.0.0.1}:${PORT:-8000}:8000'
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health')"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+  worker:
+    <<: *app
+    command: [python, -m, app.worker]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: [CMD, python, -c, "import time; from app.db import Session; from app.services import get_setting; db=Session(); assert time.time()-get_setting(db,'worker_heartbeat',{}).get('time',0)<30"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+volumes:
+  database:
+  content:
