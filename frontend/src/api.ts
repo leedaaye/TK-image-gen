@@ -1,9 +1,9 @@
 export type ProductImage = { id: string; url: string; role: string; filename: string };
 export type Product = { id: string; name: string; description: string; category: string; sku: string; features: string; constraints: string; price: string | number; currency: string; created_at: string; images: ProductImage[] };
 export type ProductInput = Omit<Product, 'id' | 'created_at' | 'images'>;
-export type Version = { id: string; url: string; base_url: string; created_at: string; instruction: string };
-export type Slide = { id: string; position: number; title: string; body: string; prompt: string; status: 'pending' | 'queued' | 'generating' | 'ready' | 'failed'; error: string; selected_version_id: string | null; url: string | null; versions: Version[] };
-export type Project = { id: string; title: string; product_id: string; product_name: string; market: string; language: string; image_count: number; style: string; brief: string; auto_generate: boolean; status: 'planning' | 'draft' | 'generating' | 'ready' | 'failed'; caption: string; tags: string[]; analysis: Record<string, unknown>; error: string; created_at: string; slides: Slide[] };
+export type Version = { id: string; url: string; base_url: string; created_at: string; instruction: string; title?: string; body?: string; prompt?: string; render_mode?: 'native_text' | 'legacy_overlay' };
+export type Slide = { id: string; position: number; title: string; body: string; prompt: string; prompt_is_current?: boolean; needs_regeneration?: boolean; status: 'pending' | 'queued' | 'generating' | 'ready' | 'failed'; error: string; selected_version_id: string | null; url: string | null; versions: Version[] };
+export type Project = { id: string; title: string; product_id: string; product_name: string; market: string; language: string; image_count: number; style: string; brief: string; auto_generate: boolean; status: 'planning' | 'draft' | 'generating' | 'ready' | 'failed'; caption: string; tags: string[]; analysis: Record<string, unknown>; prompt_pipeline?: string; error: string; created_at: string; slides: Slide[] };
 export type ProjectInput = { product_id: string; market: string; language: string; image_count: number; style: string; brief: string; auto_generate: boolean };
 export type Provider = { base_url: string; model: string; api_key: string; has_key: boolean; clear_key?: boolean; timeout: number; concurrency: number; mode: 'reference' | 'background'; extra: Record<string, unknown> };
 export type Settings = { analysis: Provider; image: Provider };

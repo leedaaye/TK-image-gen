@@ -12,10 +12,10 @@ from sqlalchemy import select
 from .config import DATA
 from .db import Session, Task, uid, initialize
 from .services import transaction, get_doc, get_setting, set_setting, provider_config, ref_paths, stored_file, file_url, enqueue_images, refresh_project
-from .providers import plan_content, generate_image
-from .rendering import render_image
+from .providers import plan_content, refine_slide_prompt, generate_image
 
 log = logging.getLogger('worker')
+analysis_semaphore = asyncio.Semaphore(2)
 
 
 def exclusive_worker_lock():
@@ -71,6 +71,7 @@ def claim_task(running):
 
 async def execute(task_id):
     config = {}
+    analysis_config = {}
     try:
         with Session() as db:
             task = db.get(Task, task_id)
@@ -78,17 +79,21 @@ async def execute(task_id):
             payload = copy.deepcopy(task.payload)
             data = copy.deepcopy(get_doc(db, project_id, 'project').data)
             config = provider_config(db, 'analysis' if task_type == 'plan' else 'image')
+            analysis_config = provider_config(db, 'analysis')
+            image_mode = provider_config(db, 'image')['mode']
         product = data['product_snapshot']
         references = ref_paths(product)
         if task_type == 'plan':
-            plan = await plan_content(config, product, data['market'], data['language'], data['image_count'], data['style'], data['brief'], references)
+            async with analysis_semaphore:
+                plan = await plan_content(config, product, data['market'], data['language'], data['image_count'], data['style'], data['brief'], references, image_mode=image_mode)
             with transaction() as db:
                 doc = get_doc(db, project_id, 'project', True)
                 current = copy.deepcopy(doc.data)
                 current.update({k: plan[k] for k in ('title', 'caption', 'tags', 'analysis')})
-                current['slides'] = [{**slide, 'id': uid(), 'position': i + 1, 'status': 'pending', 'error': '', 'selected_version_id': None, 'url': None, 'versions': []} for i, slide in enumerate(plan['slides'])]
+                current['slides'] = [{**slide, 'id': uid(), 'position': i + 1, 'status': 'pending', 'error': '', 'selected_version_id': None, 'url': None, 'versions': [], 'prompt_pipeline': 'native_text_v1', 'prompt_is_current': True, 'prompt_image_mode': image_mode, 'needs_regeneration': False} for i, slide in enumerate(plan['slides'])]
                 current['status'], current['error'] = 'draft', ''
                 current['storage_id'] = project_id
+                current['prompt_pipeline'] = 'native_text_v1'
                 doc.data = current
                 db.get(Task, task_id).status = 'completed'
                 db.flush()
@@ -96,17 +101,35 @@ async def execute(task_id):
                     enqueue_images(db, doc)
         else:
             slide = next(s for s in data['slides'] if s['id'] == slide_id)
-            prompt = '\n'.join([
-                'Create an e-commerce carousel visual. Do not add text, logos, captions or fake labels. Leave negative space for text overlays.',
-                'Market: ' + data['market'], 'Visual style shared across the entire set: ' + data['style'],
-                'Product facts: ' + str({k: product.get(k, '') for k in ('name', 'description', 'features', 'constraints')}),
-                'Slide visual: ' + slide['prompt'], 'Modification request: ' + payload.get('instruction', ''),
-                'Preserve the product shape, colors and number of parts when reference images are provided. Do not invent certifications or numerical claims.',
-            ])
-            # Background mode deliberately creates only scenery; UI clearly labels this mode.
-            if config['mode'] == 'background':
-                prompt += '\nBACKGROUND ONLY: produce scenery and props, no product or packaging. The user will composite the actual product separately.'
-            raw = await generate_image(config, prompt, references if config['mode'] == 'reference' else [])
+            instruction = payload.get('instruction', '')
+            prepared = payload.get('prepared_slide')
+            prepared_context = {'style': data['style'], 'market': data['market'], 'language': data['language'], 'title': slide['title'], 'body': slide['body'], 'prompt': slide['prompt']}
+            if prepared and payload.get('prepared_image_mode') == image_mode and payload.get('prepared_context') == prepared_context:
+                # A retry reuses the already-approved AI brief instead of paying
+                # for another refinement or changing the failed generation's intent.
+                slide = {**slide, **prepared}
+            elif (payload.get('force_refine') or instruction or not slide.get('prompt_is_current')
+                  or slide.get('prompt_pipeline') != 'native_text_v1'
+                  or slide.get('prompt_image_mode') != image_mode):
+                async with analysis_semaphore:
+                    refined = await refine_slide_prompt(analysis_config, product, data, slide, instruction, references, image_mode=image_mode)
+                slide = {**slide, **refined}
+                prepared = refined
+            prompt = slide['prompt']
+            if slide['title'] not in prompt or slide['body'] not in prompt:
+                raise RuntimeError('完整生图提示词必须包含本张标题与正文，请更新策划')
+            # Persist the exact final brief BEFORE the paid image request.
+            with transaction() as db:
+                doc = get_doc(db, project_id, 'project', True)
+                current = copy.deepcopy(doc.data)
+                target = next(s for s in current['slides'] if s['id'] == slide_id)
+                target.update({k: slide[k] for k in ('title', 'body', 'prompt')})
+                target.update(prompt_is_current=True, prompt_pipeline='native_text_v1', prompt_image_mode=image_mode)
+                doc.data = current
+                queued = db.get(Task, task_id)
+                queued.payload = {**queued.payload, 'prepared_slide': {k: slide[k] for k in ('title', 'body', 'prompt')}, 'prepared_image_mode': image_mode, 'prepared_context': {**prepared_context, 'prompt': prompt}}
+            # No raw facts, dict dumps, extra directives or copy are appended here.
+            raw = await generate_image(config, prompt, references if image_mode == 'reference' else [])
             version_id = uid()
             base_relative = f'projects/{project_id}/{slide_id}/{version_id}-base.png'
             output_relative = f'projects/{project_id}/{slide_id}/{version_id}.jpg'
@@ -115,20 +138,25 @@ async def execute(task_id):
             with Image.open(io.BytesIO(raw)) as image:
                 image.load()
                 image.convert('RGB').save(base_path, format='PNG')
-            await asyncio.to_thread(render_image, base_path, output_path, slide['title'], slide['body'], data['language'])
+                # Preserve the entire native composition: no text overlays,
+                # crops or forced aspect-ratio changes that could clip copy.
+                image.convert('RGB').save(output_path, format='JPEG', quality=95)
             with transaction() as db:
                 doc = get_doc(db, project_id, 'project', True)
                 current = copy.deepcopy(doc.data)
                 target = next(s for s in current['slides'] if s['id'] == slide_id)
-                version = {'id': version_id, 'url': file_url(output_relative), 'base_url': file_url(base_relative), 'created_at': datetime.now(timezone.utc).isoformat(), 'instruction': payload.get('instruction', ''), 'model': config['model'], 'mode': config['mode'], 'prompt': prompt}
+                version = {'id': version_id, 'url': file_url(output_relative), 'base_url': file_url(base_relative), 'created_at': datetime.now(timezone.utc).isoformat(), 'instruction': payload.get('instruction', ''), 'model': config['model'], 'mode': config['mode'], 'prompt': prompt, 'title': slide['title'], 'body': slide['body'], 'render_mode': 'native_text', 'analysis_model': analysis_config['model'], 'style': data['style']}
                 target['versions'].append(version)
-                target.update(status='ready', error='', selected_version_id=version_id, url=version['url'])
+                target.update(status='ready', error='', selected_version_id=version_id, url=version['url'], needs_regeneration=False)
                 doc.data = current
                 db.get(Task, task_id).status = 'completed'
                 db.flush()
                 refresh_project(db, doc)
     except Exception as exc:
-        message = str(exc).replace(config.get('api_key', '') or '\x00', '***')[:1000]
+        message = str(exc)
+        for private_config in (config, analysis_config):
+            message = message.replace(private_config.get('api_key', '') or '\x00', '***')
+        message = message[:1000]
         log.error('任务 %s 失败: %s', task_id, message)
         with transaction() as db:
             task = db.get(Task, task_id)
@@ -150,7 +178,10 @@ async def execute(task_id):
 
 
 async def run():
+    global analysis_semaphore
     initialize()
+    with Session() as db:
+        analysis_semaphore = asyncio.Semaphore(provider_config(db, 'analysis')['concurrency'])
     lock_handle = exclusive_worker_lock()
     recover_interrupted()
     running = {}

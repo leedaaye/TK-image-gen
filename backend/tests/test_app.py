@@ -45,7 +45,11 @@ def new_project(client):
 
 
 async def mock_plan(*args, **kwargs):
-    return {'title': 'Travel cup', 'caption': 'A cup for daily routines.', 'tags': ['#cup'], 'analysis': {'missing_information': ['capacity']}, 'slides': [{'title': f'Cup {i}', 'body': 'A blue cup', 'prompt': 'Blue cup in a clean kitchen'} for i in range(4)]}
+    return {'title': 'Travel cup', 'caption': 'A cup for daily routines.', 'tags': ['#cup'], 'analysis': {'missing_information': ['capacity'], 'supported_facts': ['blue'], 'cautions': [], 'shared_visual_direction': 'Blue and white, editorial daylight'}, 'slides': [{'title': f'Cup {i}', 'body': 'A blue cup', 'prompt': f'An editorial blue cup image. Render EXACT headline "Cup {i}" and body "A blue cup" in high-contrast type.'} for i in range(4)]}
+
+
+async def mock_refine(provider, product, project, slide, instruction, references, image_mode='reference'):
+    return {'title': slide['title'], 'body': slide['body'], 'prompt': f'A refined editorial cup visual. Render EXACT text "{slide["title"]}" and "{slide["body"]}". Bright daylight.'}
 
 
 async def mock_image(*args, **kwargs):
@@ -83,6 +87,7 @@ def test_key_encryption_and_retention(client):
 def test_complete_lifecycle_and_export(client, monkeypatch):
     monkeypatch.setattr(worker, 'plan_content', mock_plan)
     monkeypatch.setattr(worker, 'generate_image', mock_image)
+    monkeypatch.setattr(worker, 'refine_slide_prompt', mock_refine)
     product, project = new_project(client)
     ident = project['id']
     # Snapshot remains valid after product metadata and image-list changes.
@@ -102,20 +107,124 @@ def test_complete_lifecycle_and_export(client, monkeypatch):
     assert client.get(url).status_code == 200
     response = client.get(f'/api/projects/{ident}/export', params={'slide_ids': ids[0], 'include_bases': 'true'})
     with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
-        assert set(archive.namelist()) == {'01.jpg', 'bases/01.png', 'caption.txt', 'plan.json'}
+        assert set(archive.namelist()) == {'01.jpg', 'originals/01.png', 'caption.txt', 'plan.json'}
     assert client.post(f'/api/projects/{ident}/slides/{ids[0]}/regenerate', json={'instruction': 'more light'}).status_code == 200
     run_next()
     project = client.get(f'/api/projects/{ident}').json()
     assert len(project['slides'][0]['versions']) == 2
     old = project['slides'][0]['versions'][0]['id']
-    edited = client.patch(f'/api/projects/{ident}/slides/{ids[0]}', json={'title': '新文案', 'selected_version_id': old}).json()
-    assert edited['slides'][0]['selected_version_id'] == old
-    assert edited['slides'][0]['url'] != url
-    assert len(edited['slides'][0]['versions']) == 2
-    # No extra paid task created for editing copy.
+    before_edit_url = project['slides'][0]['url']
+    edited = client.patch(f'/api/projects/{ident}/slides/{ids[0]}', json={'title': '新文案'}).json()
+    assert edited['slides'][0]['needs_regeneration']
+    assert edited['slides'][0]['url'] == before_edit_url
+    assert edited['status'] == 'draft'
+    # Saving copy is free and does not alter pixels or create a task.
     assert len(client.get('/api/tasks').json()) == 6
+    assert client.post(f'/api/projects/{ident}/generate', json={}).status_code == 200
+    run_next()
+    project = client.get(f'/api/projects/{ident}').json()
+    assert project['slides'][0]['title'] == '新文案'
+    assert len(project['slides'][0]['versions']) == 3
+    restored = client.patch(f'/api/projects/{ident}/slides/{ids[0]}', json={'selected_version_id': old}).json()
+    assert restored['slides'][0]['selected_version_id'] == old
+    assert restored['slides'][0]['url'] == url
+    assert restored['slides'][0]['title'] == 'Cup 0'
+    assert not restored['slides'][0]['needs_regeneration']
     assert client.delete(f'/api/projects/{ident}').status_code == 200
     assert client.get(f'/api/projects/{ident}').status_code == 404
+
+
+def test_native_prompt_is_sent_verbatim_and_pixels_are_not_overlaid(client, monkeypatch):
+    monkeypatch.setattr(worker, 'plan_content', mock_plan)
+    calls = []
+    async def capture(provider, prompt, references):
+        calls.append(prompt)
+        return image_bytes()
+    async def unexpected_refine(*args, **kwargs):
+        raise AssertionError('A current planned prompt must be sent directly')
+    monkeypatch.setattr(worker, 'generate_image', capture)
+    monkeypatch.setattr(worker, 'refine_slide_prompt', unexpected_refine)
+    _, project = new_project(client)
+    run_next()
+    project = client.get(f'/api/projects/{project["id"]}').json()
+    slide = project['slides'][0]
+    client.post(f'/api/projects/{project["id"]}/generate', json={'slide_ids': [slide['id']]})
+    run_next()
+    result = client.get(f'/api/projects/{project["id"]}').json()['slides'][0]
+    assert calls == [slide['prompt']]
+    version = result['versions'][0]
+    assert version['render_mode'] == 'native_text'
+    assert version['prompt'] == slide['prompt']
+    from app.services import relative_url_path
+    with Image.open(relative_url_path(version['base_url'])) as output:
+        assert output.size == (320, 400)  # no forced crop or 1080x1440 overlay
+        assert output.getpixel((160, 390)) == (127, 166, 176)
+    with Image.open(relative_url_path(result['url'])) as output:
+        assert output.size == (320, 400)
+        assert max(abs(a-b) for a,b in zip(output.getpixel((160,390)), (127,166,176))) < 4
+
+
+def test_legacy_upgrade_and_failed_image_retry_reuses_prepared_prompt(client, monkeypatch):
+    monkeypatch.setattr(worker, 'plan_content', mock_plan)
+    refinements = []
+    async def refine(*args, **kwargs):
+        refinements.append(args[3]['title'])
+        return await mock_refine(*args, **kwargs)
+    async def fail_image(*args, **kwargs):
+        raise RuntimeError('simulated image failure')
+    monkeypatch.setattr(worker, 'refine_slide_prompt', refine)
+    monkeypatch.setattr(worker, 'generate_image', fail_image)
+    _, project = new_project(client)
+    run_next()
+    with transaction() as db:
+        doc = db.get(Document, project['id'])
+        import copy
+        data = copy.deepcopy(doc.data)
+        slide = data['slides'][0]
+        slide.pop('prompt_pipeline')
+        slide['prompt_is_current'] = False
+        slide['prompt'] = 'Legacy scene without any letters'
+        slide_id = slide['id']
+        doc.data = data
+    client.post(f'/api/projects/{project["id"]}/generate', json={'slide_ids': [slide_id]})
+    run_next()
+    failed = next(t for t in client.get('/api/tasks').json() if t['type'] == 'image')
+    assert failed['status'] == 'failed'
+    assert len(refinements) == 1
+    monkeypatch.setattr(worker, 'generate_image', mock_image)
+    assert client.post(f'/api/tasks/{failed["id"]}/retry').status_code == 200
+    run_next()
+    assert len(refinements) == 1
+    result = client.get(f'/api/projects/{project["id"]}').json()['slides'][0]
+    assert result['status'] == 'ready' and result['versions'][0]['render_mode'] == 'native_text'
+
+
+def test_empty_instruction_regenerate_refines_and_style_restore_stays_stale(client, monkeypatch):
+    monkeypatch.setattr(worker, 'plan_content', mock_plan)
+    monkeypatch.setattr(worker, 'generate_image', mock_image)
+    refinements = []
+    async def refine(*args, **kwargs):
+        refinements.append(args[4])
+        return await mock_refine(*args, **kwargs)
+    monkeypatch.setattr(worker, 'refine_slide_prompt', refine)
+    _, project = new_project(client)
+    ident = project['id']
+    run_next()
+    slide = client.get(f'/api/projects/{ident}').json()['slides'][0]
+    client.post(f'/api/projects/{ident}/generate', json={'slide_ids': [slide['id']]})
+    run_next()
+    original = client.get(f'/api/projects/{ident}').json()['slides'][0]['versions'][0]
+    assert refinements == []
+    client.post(f'/api/projects/{ident}/slides/{slide["id"]}/regenerate', json={'instruction': ''})
+    run_next()
+    assert refinements == ['']
+    client.patch(f'/api/projects/{ident}', json={'style': 'dark editorial'})
+    restored = client.patch(f'/api/projects/{ident}/slides/{slide["id"]}', json={'selected_version_id': original['id']}).json()
+    assert restored['slides'][0]['url'] == original['url']
+    assert restored['slides'][0]['prompt_is_current'] is False
+    bad_slide = {k: slide[k] for k in ('id', 'title', 'body', 'prompt')}
+    bad_slide['body'] = '   '
+    assert client.patch(f'/api/projects/{ident}', json={'slides': [bad_slide]}).status_code == 422
 
 
 def test_failure_recovery_and_retry(client, monkeypatch):

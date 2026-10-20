@@ -28,10 +28,10 @@ Provider={base_url,model,api_key:string(读取为空),has_key:bool,timeout:180,c
 - POST /projects {product_id,market,language,image_count:4..10,style,brief,auto_generate:bool} -> Project（创建 planning 任务）
 - GET /projects/{id} -> Project
 - PATCH /projects/{id} {title?,caption?,tags?,style?,slides?:[{id,title,body,prompt}]} -> Project
-- POST /projects/{id}/generate {slide_ids?:string[]} -> Project（省略表示所有未完成图片；需已有策划）
+- POST /projects/{id}/generate {slide_ids?:string[]} -> Project（省略表示所有未完成或needs_regeneration图片；需已有策划）
 - POST /projects/{id}/replan -> Project
 - POST /projects/{id}/slides/{slide_id}/regenerate {instruction:string} -> Project
-- PATCH /projects/{id}/slides/{slide_id} {title?,body?,selected_version_id?} -> Project（文案变更重排当前版本，不调用模型）
+- PATCH /projects/{id}/slides/{slide_id} {title?,body?,selected_version_id?} -> Project（改文案仅保存草稿，标needs_regeneration，不改已有图片不调用模型；版本恢复与文案修改不能同次提交。恢复版本原文件及记录的copy/prompt，不再重排）
 - DELETE /projects/{id} 删除作品，忙碌状态拒绝
 - GET /projects/{id}/export?slide_ids=id,id&include_bases=true -> ZIP
 Project={id,title,product_id,product_name,market,language,image_count,style,brief,auto_generate,status:"planning"|"draft"|"generating"|"ready"|"failed",caption,tags:string[],analysis:object,error,created_at,slides:Slide[]}
@@ -40,5 +40,13 @@ Slide={id,position,title,body,prompt,status:"pending"|"queued"|"generating"|"rea
 Task={id,project_id,slide_id,type:"plan"|"image",status:"queued"|"running"|"completed"|"failed",error,created_at,updated_at}
 - POST /tasks/{id}/retry -> Task（重新排队，防重复）
 - GET /files/{path} 认证后文件读取，限制根目录，不允许路径穿越。
+
+## 原生图中文字流程（native_text_v1）
+- Project.prompt_pipeline、Slide.prompt_pipeline 为 native_text_v1；analysis包含shared_visual_direction、supported_facts、missing_information、cautions。
+- Slide增加needs_regeneration、prompt_is_current、prompt_image_mode。改copy/prompt或项目style使提示词失效且待重生。
+- Version增加title、body、prompt、render_mode=native_text、style、mode及analysis_model。旧版本字段可缺省，按历史图片保留。
+- 分析模型输出独立完整自然语言prompt，必须逐字包含title/body；Worker直接把prompt发送给生图模型，不追加原资料或后期叠字。图片保存原尺寸PNG与JPEG，不裁切。
+- regenerate总是先分析修订再生图；旧项目/过期prompt首次生成先升级。重试未改动任务可复用其持久化prepared_slide以减少分析费用。
+- include_bases兼容旧参数名，ZIP内原始图片改为originals/，图片可能有文字；不再表示无字底图。
 
 前端每3秒轮询活动项目和任务；所有图片 URL 是受认证的 /api/files/ 相对路径。API 不含 /api 前缀的另一种实现不接受。

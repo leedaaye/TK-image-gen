@@ -359,9 +359,9 @@ def project(ident: str):
 class SlideEditInput(BaseModel):
     model_config = ConfigDict(extra='forbid')
     id: str
-    title: str = Field(max_length=2000)
-    body: str = Field(max_length=4000)
-    prompt: str = Field(max_length=12000)
+    title: str = Field(min_length=1, max_length=2000, pattern=r'\S')
+    body: str = Field(min_length=1, max_length=4000, pattern=r'\S')
+    prompt: str = Field(min_length=1, max_length=12000)
 
 
 class ProjectEditInput(BaseModel):
@@ -386,6 +386,7 @@ def update_project(ident: str, body: ProjectEditInput):
         if active_tasks(db, ident):
             raise HTTPException(409, '任务进行中，请完成后编辑')
         data = copy.deepcopy(doc.data)
+        style_changed = 'style' in body and body['style'] != data.get('style')
         for key in ('title', 'caption', 'style'):
             if key in body:
                 if not isinstance(body[key], str) or len(body[key]) > 12000:
@@ -395,31 +396,29 @@ def update_project(ident: str, body: ProjectEditInput):
             if not isinstance(body['tags'], list) or len(body['tags']) > 40 or not all(isinstance(x, str) for x in body['tags']):
                 raise HTTPException(400, '标签格式无效')
             data['tags'] = body['tags']
+        for slide in data['slides']:
+            if style_changed:
+                mark_slide_changed(slide)
         for edit in body.get('slides', []):
             slide = next((s for s in data['slides'] if s['id'] == edit.get('id')), None)
             if not slide:
                 raise HTTPException(400, '图片不存在')
+            changed = any(edit[key] != slide.get(key) for key in ('title', 'body', 'prompt'))
             for key in ('title', 'body', 'prompt'):
-                if key in edit:
-                    if not isinstance(edit[key], str) or len(edit[key]) > 12000:
-                        raise HTTPException(400, '图片文本无效')
-                    slide[key] = edit[key]
-            rerender_slide(data, slide)
+                slide[key] = edit[key]
+            if changed:
+                mark_slide_changed(slide)
+        if any(s.get('needs_regeneration') for s in data['slides']):
+            data['status'] = 'draft'
         doc.data = data
         return project_json(doc)
 
 
-def rerender_slide(project_data, slide):
-    if not slide.get('selected_version_id'):
-        return
-    from .rendering import render_image
-    version = next(v for v in slide['versions'] if v['id'] == slide['selected_version_id'])
-    relative = f'projects/{project_data.get("storage_id", "renders")}/{uid()}.jpg'
-    target = stored_file(relative)
-    target.parent.mkdir(parents=True, exist_ok=True)
-    render_image(relative_url_path(version['base_url']), target, slide['title'], slide['body'], project_data['language'])
-    version['url'] = file_url(relative)
-    slide['url'] = version['url']
+def mark_slide_changed(slide):
+    # Draft edits never alter pixels or historical versions. A new AI generation
+    # is required because the copy is now part of the generated image itself.
+    slide['prompt_is_current'] = False
+    slide['needs_regeneration'] = True
 
 
 @app.post('/api/projects/{ident}/generate', dependencies=[Depends(auth)])
@@ -450,7 +449,7 @@ def regenerate(ident: str, slide_id: str, body: dict):
         raise HTTPException(400, '修改要求无效')
     with transaction() as db:
         doc = get_doc(db, ident, 'project', True)
-        enqueue_images(db, doc, [slide_id], instruction)
+        enqueue_images(db, doc, [slide_id], instruction, force_refine=True)
         return project_json(doc)
 
 
@@ -464,20 +463,30 @@ def edit_slide(ident: str, slide_id: str, body: dict):
         slide = next((s for s in data['slides'] if s['id'] == slide_id), None)
         if not slide:
             raise HTTPException(404, '图片不存在')
+        if 'selected_version_id' in body and any(k in body for k in ('title', 'body')):
+            raise HTTPException(400, '恢复版本和修改文案请分别操作')
         for key in ('title', 'body'):
             if key in body:
-                if not isinstance(body[key], str) or len(body[key]) > 2000:
-                    raise HTTPException(400, '文案过长或格式无效')
-                slide[key] = body[key]
+                limit = 2000 if key == 'title' else 4000
+                if not isinstance(body[key], str) or not body[key].strip() or len(body[key]) > limit:
+                    raise HTTPException(400, f'文案不能为空且不超过{limit}字')
+                if slide.get(key) != body[key]:
+                    slide[key] = body[key]
+                    mark_slide_changed(slide)
         if 'selected_version_id' in body:
             version = next((v for v in slide['versions'] if v['id'] == body['selected_version_id']), None)
             if not version:
                 raise HTTPException(400, '版本不存在')
-            slide['selected_version_id'] = version['id']
-            slide['status'], slide['error'] = 'ready', ''
-        rerender_slide(data, slide)
-        if all(s['status'] == 'ready' for s in data['slides']):
-            data['status'] = 'ready'
+            slide.update(selected_version_id=version['id'], url=version['url'], status='ready', error='', needs_regeneration=False)
+            if version.get('render_mode') == 'native_text':
+                for key in ('title', 'body', 'prompt'):
+                    slide[key] = version[key]
+                slide['prompt_is_current'] = version.get('style') == data['style']
+                slide['prompt_image_mode'] = version['mode']
+                slide['prompt_pipeline'] = 'native_text_v1'
+            else:
+                slide['prompt_is_current'] = False
+        data['status'] = 'ready' if all(s['status'] == 'ready' and not s.get('needs_regeneration') for s in data['slides']) else 'draft'
         doc.data = data
         return project_json(doc)
 
@@ -509,7 +518,7 @@ def export(ident: str, slide_ids: str = '', include_bases: bool = False):
             archive.write(relative_url_path(slide['url']), f'{slide["position"]:02d}.jpg')
             if include_bases:
                 version = next(v for v in slide['versions'] if v['id'] == slide['selected_version_id'])
-                archive.write(relative_url_path(version['base_url']), f'bases/{slide["position"]:02d}.png')
+                archive.write(relative_url_path(version['base_url']), f'originals/{slide["position"]:02d}.png')
         archive.writestr('caption.txt', data.get('caption', '') + '\n\n' + ' '.join(data.get('tags', [])))
         archive.writestr('plan.json', json.dumps(data, ensure_ascii=False, indent=2))
     buffer.seek(0)

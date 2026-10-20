@@ -107,7 +107,7 @@ def active_tasks(db, project_id):
     return list(db.scalars(select(Task).where(Task.project_id == project_id, Task.status.in_(['queued', 'running']))))
 
 
-def enqueue_images(db, doc, slide_ids=None, instruction=''):
+def enqueue_images(db, doc, slide_ids=None, instruction='', force_refine=False):
     data = copy.deepcopy(doc.data)
     if not data.get('slides'):
         raise HTTPException(409, '请先完成内容策划')
@@ -117,12 +117,12 @@ def enqueue_images(db, doc, slide_ids=None, instruction=''):
     valid = {s['id'] for s in data['slides']}
     if slide_ids is not None and not set(slide_ids).issubset(valid):
         raise HTTPException(400, '包含无效图片编号')
-    selected = [s for s in data['slides'] if (s['id'] in slide_ids if slide_ids is not None else s['status'] in ('pending', 'failed'))]
+    selected = [s for s in data['slides'] if (s['id'] in slide_ids if slide_ids is not None else s['status'] in ('pending', 'failed') or s.get('needs_regeneration', False))]
     for slide in selected:
         if slide['id'] in active:
             raise HTTPException(409, '该图片已有排队或生成任务')
         slide['status'], slide['error'] = 'queued', ''
-        db.add(Task(id=uid(), project_id=doc.id, slide_id=slide['id'], type='image', payload={'instruction': instruction}))
+        db.add(Task(id=uid(), project_id=doc.id, slide_id=slide['id'], type='image', payload={'instruction': instruction, 'force_refine': force_refine}))
     if not selected:
         raise HTTPException(409, '没有需要生成的图片')
     data['status'], data['error'] = 'generating', ''
@@ -136,5 +136,5 @@ def refresh_project(db, doc):
         data['status'] = 'planning' if any(t.type == 'plan' for t in active) else 'generating'
     elif data.get('slides'):
         states = [s['status'] for s in data['slides']]
-        data['status'] = 'ready' if all(s == 'ready' for s in states) else ('failed' if 'failed' in states else 'draft')
+        data['status'] = 'ready' if all(s == 'ready' for s in states) and not any(s.get('needs_regeneration') for s in data['slides']) else ('failed' if 'failed' in states else 'draft')
     doc.data = data
