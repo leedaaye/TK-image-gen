@@ -1,7 +1,7 @@
-"""TikTok Carousel CLI Generator.
+"""TikTok Carousel Standalone Generator.
 
-Can be run standalone by AI agents or users to produce a complete TikTok
-photo-mode carousel with native rendered text in target languages.
+Part of the tiktok-carousel-generator skill package.
+Can be executed standalone without external database or web server dependencies.
 """
 
 from __future__ import annotations
@@ -16,13 +16,20 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-# Add backend directory to path
-ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "backend"))
+# Add current folder to sys.path so local `providers.py` is always found
+SKILL_DIR = Path(__file__).resolve().parent
+if str(SKILL_DIR) not in sys.path:
+    sys.path.insert(0, str(SKILL_DIR))
 
-from app.db import Session
-from app.providers import ProviderError, generate_image, plan_content, refine_slide_prompt
-from app.services import provider_config
+# Ensure UTF-8 output on Windows consoles so Japanese, Thai, Vietnamese, etc. never trigger GBK codec errors
+if sys.platform == "win32":
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
+from providers import ProviderError, generate_image, plan_content, refine_slide_prompt
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger("carousel-cli")
@@ -43,12 +50,28 @@ MARKETS: dict[str, tuple[str, str]] = {
 }
 
 
+def load_env_file(directory: Path) -> dict[str, str]:
+    """Lightweight zero-dependency .env loader."""
+    env_vars: dict[str, str] = {}
+    for candidate in [directory / ".env", directory.parent / ".env"]:
+        if candidate.is_file():
+            try:
+                for line in candidate.read_text(encoding="utf-8-sig").splitlines():
+                    line = line.strip()
+                    if line and not line.startswith("#") and "=" in line:
+                        k, v = line.split("=", 1)
+                        env_vars[k.strip()] = v.strip().strip("'\"")
+            except Exception:
+                pass
+            break
+    return env_vars
+
+
 def resolve_market_and_language(market_input: str, language_input: str | None = None) -> tuple[str, str]:
     cleaned = market_input.strip().upper()
     if cleaned in MARKETS:
         market_name, default_lang = MARKETS[cleaned]
     else:
-        # Check by Chinese name
         match = next((v for v in MARKETS.values() if v[0] == market_input.strip()), None)
         if match:
             market_name, default_lang = match
@@ -61,37 +84,62 @@ def resolve_market_and_language(market_input: str, language_input: str | None = 
 
 
 def load_providers(args: argparse.Namespace) -> tuple[dict, dict]:
-    analysis_provider = {}
-    image_provider = {}
+    file_env = load_env_file(SKILL_DIR)
 
-    try:
-        with Session() as db:
-            analysis_provider = provider_config(db, "analysis")
-            image_provider = provider_config(db, "image")
-    except Exception as e:
-        log.warning("无法从本地数据库读取配置 (将检查环境变量与命令行参数): %s", e)
+    # Base configuration defaults
+    analysis_provider = {
+        "base_url": args.analysis_url or os.getenv("ANALYSIS_BASE_URL") or file_env.get("ANALYSIS_BASE_URL", ""),
+        "api_key": args.analysis_key or os.getenv("ANALYSIS_API_KEY") or file_env.get("ANALYSIS_API_KEY", ""),
+        "model": args.analysis_model or os.getenv("ANALYSIS_MODEL") or file_env.get("ANALYSIS_MODEL", ""),
+        "timeout": 180,
+        "concurrency": 2,
+        "extra": {},
+    }
 
-    # CLI / Env overrides
-    if args.analysis_url:
-        analysis_provider["base_url"] = args.analysis_url
-    if args.analysis_key:
-        analysis_provider["api_key"] = args.analysis_key
-    if args.analysis_model:
-        analysis_provider["model"] = args.analysis_model
+    image_provider = {
+        "base_url": args.image_url or os.getenv("IMAGE_BASE_URL") or file_env.get("IMAGE_BASE_URL", ""),
+        "api_key": args.image_key or os.getenv("IMAGE_API_KEY") or file_env.get("IMAGE_API_KEY", ""),
+        "model": args.image_model or os.getenv("IMAGE_MODEL") or file_env.get("IMAGE_MODEL", ""),
+        "mode": args.image_mode or os.getenv("IMAGE_MODE") or file_env.get("IMAGE_MODE", "reference"),
+        "timeout": 180,
+        "concurrency": 2,
+        "extra": {},
+    }
 
-    if args.image_url:
-        image_provider["base_url"] = args.image_url
-    if args.image_key:
-        image_provider["api_key"] = args.image_key
-    if args.image_model:
-        image_provider["model"] = args.image_model
-    if args.image_mode:
-        image_provider["mode"] = args.image_mode
+    # Optional fallback to local TK-tuwen database if present on this machine and keys missing
+    if not analysis_provider["api_key"] or not image_provider["api_key"]:
+        try:
+            candidates = [
+                SKILL_DIR.parent.parent / "backend",
+                Path.cwd() / "backend",
+                Path("D:/LEE-APP/CODE/TK-tuwen/backend"),
+            ]
+            for candidate in candidates:
+                if candidate.is_dir():
+                    if str(candidate) not in sys.path:
+                        sys.path.append(str(candidate))
+                    from app.db import Session
+                    from app.services import provider_config
 
-    if not analysis_provider.get("api_key") or not analysis_provider.get("model"):
-        raise ValueError("缺少分析模型配置，请通过 --analysis-key/--analysis-model 或在 Web 界面中配置")
-    if not args.plan_only and (not image_provider.get("api_key") or not image_provider.get("model")):
-        raise ValueError("缺少生图模型配置，请通过 --image-key/--image-model 或在 Web 界面中配置")
+                    with Session() as db:
+                        db_analysis = provider_config(db, "analysis")
+                        db_image = provider_config(db, "image")
+                        for k in ("base_url", "api_key", "model"):
+                            if not analysis_provider[k] and db_analysis.get(k):
+                                analysis_provider[k] = db_analysis[k]
+                            if not image_provider[k] and db_image.get(k):
+                                image_provider[k] = db_image[k]
+                        if not args.image_mode and db_image.get("mode"):
+                            image_provider["mode"] = db_image["mode"]
+                    break
+        except Exception:
+            pass
+
+    if not analysis_provider.get("api_key") or not analysis_provider.get("model") or not analysis_provider.get("base_url"):
+        raise ValueError("缺少分析模型配置。请通过 CLI 参数 (--analysis-url, --analysis-key, --analysis-model) 或在当前目录创建 .env 配置。")
+
+    if not args.plan_only and (not image_provider.get("api_key") or not image_provider.get("model") or not image_provider.get("base_url")):
+        raise ValueError("缺少生图模型配置。请通过 CLI 参数 (--image-url, --image-key, --image-model) 或在当前目录创建 .env 配置。")
 
     return analysis_provider, image_provider
 
@@ -135,7 +183,7 @@ async def run_pipeline(args: argparse.Namespace) -> dict:
     out_dir = Path(args.out_dir or f"./carousel_{datetime.now().strftime('%Y%m%d_%H%M%S')}").resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    # 1. Plan or Refine
+    # 1. Single-slide refine mode
     if args.refine_slide is not None:
         if not args.plan_file:
             raise ValueError("单图修订模式需提供 --plan-file 指向先前的 plan.json")
@@ -150,7 +198,7 @@ async def run_pipeline(args: argparse.Namespace) -> dict:
             raise IndexError(f"无效的 slide 编号: {args.refine_slide} (共 {len(plan['slides'])} 张)")
 
         target_slide = plan["slides"][slide_idx]
-        log.info("正在为第 %d 张图片修订完整提示词...", args.refine_slide)
+        log.info("正在为第 %d 张图片修订完整设计简报 Prompt...", args.refine_slide)
         refined = await refine_slide_prompt(
             analysis_provider,
             product,
@@ -163,7 +211,6 @@ async def run_pipeline(args: argparse.Namespace) -> dict:
         target_slide.update(refined)
         plan["slides"][slide_idx] = target_slide
 
-        # Save updated plan
         (out_dir / "plan.json").write_text(json.dumps(plan, ensure_ascii=False, indent=2), encoding="utf-8")
 
         if args.plan_only:
@@ -178,7 +225,9 @@ async def run_pipeline(args: argparse.Namespace) -> dict:
 
         from PIL import Image
         img_out = out_dir / f"{args.refine_slide:02d}.jpg"
+        raw_out = out_dir / f"{args.refine_slide:02d}.png"
         with Image.open(io.BytesIO(img_bytes)) as im:
+            im.convert("RGB").save(raw_out, format="PNG")
             im.convert("RGB").save(img_out, format="JPEG", quality=95)
 
         return {
@@ -189,7 +238,7 @@ async def run_pipeline(args: argparse.Namespace) -> dict:
             "prompt": target_slide["prompt"],
         }
 
-    # Standard full carousel generation
+    # 2. Standard full carousel generation
     log.info("正在由 AI 视觉操盘手策划 TikTok 轮播故事线 (目标市场: %s, 语言: %s, 风格: %s, 共 %d 张)...", market, language, args.style, args.count)
     plan = await plan_content(
         analysis_provider,
@@ -203,9 +252,8 @@ async def run_pipeline(args: argparse.Namespace) -> dict:
         image_mode=image_provider.get("mode", "reference"),
     )
 
-    # Save plan.json and caption.txt
     (out_dir / "plan.json").write_text(json.dumps(plan, ensure_ascii=False, indent=2), encoding="utf-8")
-    tags_str = ' '.join(f"#{t.lstrip('#')}" for t in plan.get('tags', []))
+    tags_str = " ".join(f"#{t.lstrip('#')}" for t in plan.get("tags", []))
     caption_content = f"{plan.get('caption', '')}\n\n{tags_str}"
     (out_dir / "caption.txt").write_text(caption_content, encoding="utf-8")
 
@@ -267,7 +315,7 @@ async def run_pipeline(args: argparse.Namespace) -> dict:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="TikTok Carousel CLI Generator")
+    parser = argparse.ArgumentParser(description="TikTok Carousel Standalone Generator")
     parser.add_argument("--name", required=True, help="商品名称")
     parser.add_argument("--desc", default="", help="商品描述/用途/场景")
     parser.add_argument("--features", default="", help="真实卖点/规格参数")
@@ -288,13 +336,13 @@ def main():
     parser.add_argument("--instruction", default="", help="单图重生成调整说明")
     parser.add_argument("--plan-file", default="", help="已有策划 plan.json 路径(单图重生成必须提供)")
 
-    parser.add_argument("--analysis-url", default=None, help="覆盖分析模型 Base URL")
-    parser.add_argument("--analysis-key", default=None, help="覆盖分析模型 API Key")
-    parser.add_argument("--analysis-model", default=None, help="覆盖分析模型名称")
-    parser.add_argument("--image-url", default=None, help="覆盖生图模型 Base URL")
-    parser.add_argument("--image-key", default=None, help="覆盖生图模型 API Key")
-    parser.add_argument("--image-model", default=None, help="覆盖生图模型名称")
-    parser.add_argument("--image-mode", choices=["reference", "background"], default=None, help="生图模式")
+    parser.add_argument("--analysis-url", default=None, help="分析模型 Base URL (兼容 OpenAI chat/completions)")
+    parser.add_argument("--analysis-key", default=None, help="分析模型 API Key")
+    parser.add_argument("--analysis-model", default=None, help="分析模型名称")
+    parser.add_argument("--image-url", default=None, help="生图模型 Base URL (兼容 OpenAI images/edits 或 images/generations)")
+    parser.add_argument("--image-key", default=None, help="生图模型 API Key")
+    parser.add_argument("--image-model", default=None, help="生图模型名称")
+    parser.add_argument("--image-mode", choices=["reference", "background"], default=None, help="生图模式 (reference 约束商品外观; background 仅背景)")
 
     args = parser.parse_args()
 

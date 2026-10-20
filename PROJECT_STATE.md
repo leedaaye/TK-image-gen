@@ -74,6 +74,13 @@
 - 增强 providers 的 JSON 容错保护：自动识别并剥离模型偶然返回的 markdown 代码块包裹（```json ... ```）。
 - 验证：84 项 pytest 持续全绿；真实调用本地 analysis 模型实测 `--plan-only` 策划输出与 `--refine-slide` 单图 Prompt 微调均顺利成功。
 
+## 本次优化：Skill 自包含便携化与跨平台打包支持
+- 将 `tiktok-carousel-generator` 彻底重构为独立便携包：包含 `SKILL.md`、`generate_carousel.py`、`providers.py`、`requirements.txt`、`.env.example` 和 `README.md`。
+- 消除任何对特定项目路径或外部数据库的硬依赖：同事获取该文件夹后，仅需安装 `requirements.txt` 并配置 `.env` 即可由 Agent 或命令行独立运行。在当前机器上仍能无缝复用本地既有配置。
+- 增强 Windows 控制台编码保护：自动重定向 stdout/stderr 为 UTF-8，彻底解决多语言（日/泰/越语等）在 Windows GBK 控制台下的编码崩溃问题。
+- 代码库归档：在项目根目录同步维护 `skills/tiktok-carousel-generator`，方便用户直接打包压缩或推送到 GitHub 供团队下载使用；同时已同步注册至 `~/.agents/skills` 与 `~/.config/magpie/library/skills`。
+- 验证：84 项 pytest 持续全绿；实测从全局 Skill 目录直接运行便携版脚本（日本市场策划）成功输出地道日语原生文字设计简报，JSON 结构完整，无控制台编码异常。
+
 ## 下一步
 1. 用户在模型设置输入实际服务商地址/模型/Key，用真实商品完成质量验收。
 2. 基于品类加入真实商品抠图合成与更多版式/输出比例。
